@@ -78,6 +78,28 @@ reverse.
 Nested objects and arrays are not supported in v1 and return an error. Use
 JSON for deeply nested data.
 
+## Integrate
+
+Install the CLI:
+
+```sh
+go install github.com/SomeoneUnlicensed/anal/cmd/anal@latest
+```
+
+```sh
+echo '[{"id":1,"sku":"P123","qty":2}]' | anal enc
+```
+
+Python helpers live in `tools/`:
+
+- `analctl.py` — convert JSON <-> ANAL and `diff` to measure token savings.
+- `agent_shim.py` — `wrap_tool_result()` to drop compact tool results into
+  context, and `decode()` to read them back.
+
+```sh
+python tools/analctl.py diff < payload.json
+```
+
 ## Benchmark
 
 Token counts for the same data, measured with `tiktoken` (`cl100k_base`):
