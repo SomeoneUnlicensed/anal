@@ -1,0 +1,11 @@
+# Binaries
+*.exe
+*.test
+*.out
+
+# Go workspace files
+go.work
+go.work.sum
+
+# Dependencies
+vendor/

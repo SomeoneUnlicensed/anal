@@ -1,0 +1,99 @@
+# ANAL
+
+ANAL (Agent Notation, Actually Lean) is a compact, token-lean serialization
+format for data flowing between agents and models. It needs no model
+retraining: it wins by matching the tokenizer rather than fighting it.
+
+## Why
+
+LLMs bill by tokens, not characters. JSON repeats field names, quotes, and
+brackets for every value. ANAL declares field names once in a header and then
+sends only values.
+
+## Install
+
+```sh
+go get github.com/SomeoneUnlicensed/anal
+```
+
+## Quick start
+
+```go
+package main
+
+import (
+	"fmt"
+
+	"github.com/SomeoneUnlicensed/anal"
+)
+
+func main() {
+	rows := []map[string]any{
+		{"id": 1, "sku": "P123", "qty": 2, "active": true},
+		{"id": 2, "sku": "P124", "qty": 1, "active": false},
+	}
+	data, _ := anal.Marshal(rows)
+	fmt.Print(string(data))
+}
+```
+
+Output:
+
+```text
+@table: {active,id,qty,sku}
+T|1|2|P123
+F|2|1|P124
+```
+
+## Format
+
+```text
+@table: {id,sku,qty,price,active}
+1|P123|2|100|T
+2|P124|1|150|F
+
+@obj: {event,order_id,status,total}
+order.created|8123|paid|199.9
+
+@list:
+code
+coffee
+```
+
+- `@table` — a list of flat objects, one `|`-separated row each.
+- `@obj` — a single flat object.
+- `@list` — a flat list of scalars, one value per line.
+
+Values: `T` / `F` for booleans, `~` for null, numbers as-is, strings as-is
+unless ambiguous or containing special characters — then backtick-quoted.
+
+Escapes: `\\` `` \` `` `\|` `\n` `\t` `\r`.
+
+## API
+
+`Marshal` accepts the same kinds of values as `encoding/json` — structs, maps,
+slices, and scalars — and honors `json` struct tags. `Unmarshal` does the
+reverse.
+
+Nested objects and arrays are not supported in v1 and return an error. Use
+JSON for deeply nested data.
+
+## Benchmark
+
+Token counts for the same data, measured with `tiktoken` (`cl100k_base`):
+
+| encoding | chars | tokens |
+|---|---:|---:|
+| JSON | 133 | 61 |
+| TOON | 81 | 38 |
+| ANAL | 63 | 35 |
+
+CPU benchmarks:
+
+```sh
+go test -bench=. -benchmem
+```
+
+## License
+
+MIT — see [LICENSE](LICENSE).
