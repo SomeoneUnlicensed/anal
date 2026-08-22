@@ -28,34 +28,11 @@ func main() {
 		os.Exit(2)
 	}
 
-	input, err := io.ReadAll(os.Stdin)
-	if err != nil {
-		fatal(err)
-	}
-
 	switch flag.Arg(0) {
 	case "enc", "encode":
-		var value any
-		if err := json.Unmarshal(input, &value); err != nil {
-			fatal(err)
-		}
-		output, err := anal.Marshal(value)
-		if err != nil {
-			fatal(err)
-		}
-		if _, err := os.Stdout.Write(output); err != nil {
-			fatal(err)
-		}
+		runEncode()
 	case "dec", "decode":
-		var value any
-		if err := anal.Unmarshal(input, &value); err != nil {
-			fatal(err)
-		}
-		output, err := json.MarshalIndent(value, "", "  ")
-		if err != nil {
-			fatal(err)
-		}
-		fmt.Println(string(output))
+		runDecode()
 	case "install":
 		if err := runInstall(flag.Args()[1:]); err != nil {
 			fatal(err)
@@ -64,6 +41,40 @@ func main() {
 		flag.Usage()
 		os.Exit(2)
 	}
+}
+
+func runEncode() {
+	input, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		fatal(err)
+	}
+	var value any
+	if err := json.Unmarshal(input, &value); err != nil {
+		fatal(err)
+	}
+	output, err := anal.Marshal(value)
+	if err != nil {
+		fatal(err)
+	}
+	if _, err := os.Stdout.Write(output); err != nil {
+		fatal(err)
+	}
+}
+
+func runDecode() {
+	input, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		fatal(err)
+	}
+	var value any
+	if err := anal.Unmarshal(input, &value); err != nil {
+		fatal(err)
+	}
+	output, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		fatal(err)
+	}
+	fmt.Println(string(output))
 }
 
 func fatal(err error) {
