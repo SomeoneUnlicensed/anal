@@ -16,13 +16,14 @@ const usageText = `anal — JSON <-> ANAL converter.
 Usage:
   anal enc   read JSON from stdin, write ANAL to stdout
   anal dec   read ANAL from stdin, write JSON to stdout
+  anal install [codex|claude|all]  install the ANAL skill for Codex / Claude Code
 `
 
 func main() {
 	flag.Usage = func() { fmt.Fprint(os.Stderr, usageText) }
 	flag.Parse()
 
-	if flag.NArg() != 1 {
+	if flag.NArg() < 1 {
 		flag.Usage()
 		os.Exit(2)
 	}
@@ -55,6 +56,10 @@ func main() {
 			fatal(err)
 		}
 		fmt.Println(string(output))
+	case "install":
+		if err := runInstall(flag.Args()[1:]); err != nil {
+			fatal(err)
+		}
 	default:
 		flag.Usage()
 		os.Exit(2)

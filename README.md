@@ -86,6 +86,14 @@ Install the CLI:
 go install github.com/SomeoneUnlicensed/anal/cmd/anal@latest
 ```
 
+Install the ANAL skill so coding agents know to compress large structured data:
+
+```sh
+anal install          # Codex + Claude Code
+anal install codex    # Codex only
+anal install claude   # Claude Code only
+```
+
 ```sh
 echo '[{"id":1,"sku":"P123","qty":2}]' | anal enc
 ```
