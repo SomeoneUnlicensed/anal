@@ -2,6 +2,7 @@ package anal
 
 import (
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 )
@@ -91,7 +92,11 @@ func build(b *block) (any, error) {
 	case "list":
 		out := make([]any, 0, len(b.rows))
 		for _, row := range b.rows {
-			out = append(out, decodeScalar(row))
+			value, err := decodeValue(row)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, value)
 		}
 		return out, nil
 	case "obj":
@@ -102,7 +107,7 @@ func build(b *block) (any, error) {
 		if len(b.rows) > 0 {
 			row = b.rows[0]
 		}
-		return rowToObject(b.fields, row), nil
+		return rowToObject(b.fields, row)
 	case "table":
 		if len(b.fields) == 0 {
 			out := make([]any, len(b.rows))
@@ -113,7 +118,11 @@ func build(b *block) (any, error) {
 		}
 		out := make([]any, 0, len(b.rows))
 		for _, row := range b.rows {
-			out = append(out, rowToObject(b.fields, row))
+			obj, err := rowToObject(b.fields, row)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, obj)
 		}
 		return out, nil
 	default:
@@ -121,41 +130,174 @@ func build(b *block) (any, error) {
 	}
 }
 
-func rowToObject(fields []string, row string) map[string]any {
-	values := splitRow(row)
+func rowToObject(fields []string, row string) (map[string]any, error) {
+	values, err := parseRow(row)
+	if err != nil {
+		return nil, err
+	}
 	out := make(map[string]any, len(fields))
 	for i, field := range fields {
 		if i < len(values) {
-			out[field] = decodeScalar(values[i])
+			out[field] = values[i]
 		} else {
 			out[field] = nil
 		}
 	}
-	return out
+	return out, nil
 }
 
-func splitRow(row string) []string {
-	var out []string
-	var cur strings.Builder
-	for i := 0; i < len(row); i++ {
-		switch row[i] {
-		case '\\':
-			if i+1 < len(row) {
-				cur.WriteByte(row[i])
-				cur.WriteByte(row[i+1])
-				i++
-			} else {
-				cur.WriteByte(row[i])
+// parseRow splits a "|"-delimited row into decoded values, treating nested
+// {} and [] literals and backtick-quoted strings as opaque so that a
+// literal "|" inside them never gets mistaken for a field separator.
+func parseRow(row string) ([]any, error) {
+	var out []any
+	pos := 0
+	for {
+		value, next, err := parseValue(row, pos, "|")
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, value)
+		pos = next
+		if pos >= len(row) {
+			return out, nil
+		}
+		if row[pos] != '|' {
+			return nil, fmt.Errorf("anal: expected '|' at offset %d in row %q", pos, row)
+		}
+		pos++
+	}
+}
+
+// decodeValue parses s as a single, self-contained value (a list item, or a
+// value nested inside an already-isolated field).
+func decodeValue(s string) (any, error) {
+	value, pos, err := parseValue(s, 0, "")
+	if err != nil {
+		return nil, err
+	}
+	if pos != len(s) {
+		return nil, fmt.Errorf("anal: trailing data at offset %d in value %q", pos, s)
+	}
+	return value, nil
+}
+
+// parseValue parses one value starting at pos. stops names the bytes (beyond
+// the closing "}" / "]" of a nested literal) that terminate a bare scalar in
+// the current context: "|" between row fields, "" when the value spans the
+// rest of s, or "," between object/array elements.
+func parseValue(s string, pos int, stops string) (any, int, error) {
+	if pos >= len(s) {
+		return "", pos, nil
+	}
+	switch s[pos] {
+	case '`':
+		return parseQuoted(s, pos)
+	case '{':
+		return parseObject(s, pos)
+	case '[':
+		return parseArray(s, pos)
+	default:
+		end := pos
+		for end < len(s) && !strings.ContainsRune(stops, rune(s[end])) {
+			end++
+		}
+		return decodeScalar(s[pos:end]), end, nil
+	}
+}
+
+func parseObject(s string, pos int) (any, int, error) {
+	pos++ // skip '{'
+	obj := map[string]any{}
+	if pos < len(s) && s[pos] == '}' {
+		return obj, pos + 1, nil
+	}
+	for {
+		var key string
+		if pos < len(s) && s[pos] == '`' {
+			decoded, next, err := parseQuoted(s, pos)
+			if err != nil {
+				return nil, pos, err
 			}
-		case '|':
-			out = append(out, cur.String())
-			cur.Reset()
+			key, pos = decoded.(string), next
+		} else {
+			start := pos
+			for pos < len(s) && s[pos] != ':' {
+				pos++
+			}
+			if pos >= len(s) {
+				return nil, pos, fmt.Errorf("anal: expected ':' in object %q", s)
+			}
+			key = s[start:pos]
+		}
+		if pos >= len(s) || s[pos] != ':' {
+			return nil, pos, fmt.Errorf("anal: expected ':' in object %q", s)
+		}
+		pos++ // skip ':'
+
+		value, next, err := parseValue(s, pos, ",}")
+		if err != nil {
+			return nil, pos, err
+		}
+		obj[key] = value
+		pos = next
+
+		if pos >= len(s) {
+			return nil, pos, fmt.Errorf("anal: unterminated object %q", s)
+		}
+		switch s[pos] {
+		case ',':
+			pos++
+		case '}':
+			return obj, pos + 1, nil
 		default:
-			cur.WriteByte(row[i])
+			return nil, pos, fmt.Errorf("anal: expected ',' or '}' in object %q", s)
 		}
 	}
-	out = append(out, cur.String())
-	return out
+}
+
+func parseArray(s string, pos int) (any, int, error) {
+	pos++ // skip '['
+	arr := []any{}
+	if pos < len(s) && s[pos] == ']' {
+		return arr, pos + 1, nil
+	}
+	for {
+		value, next, err := parseValue(s, pos, ",]")
+		if err != nil {
+			return nil, pos, err
+		}
+		arr = append(arr, value)
+		pos = next
+
+		if pos >= len(s) {
+			return nil, pos, fmt.Errorf("anal: unterminated array %q", s)
+		}
+		switch s[pos] {
+		case ',':
+			pos++
+		case ']':
+			return arr, pos + 1, nil
+		default:
+			return nil, pos, fmt.Errorf("anal: expected ',' or ']' in array %q", s)
+		}
+	}
+}
+
+func parseQuoted(s string, pos int) (any, int, error) {
+	pos++ // skip opening backtick
+	start := pos
+	for pos < len(s) {
+		if s[pos] == '\\' && pos+1 < len(s) {
+			pos += 2
+			continue
+		}
+		if s[pos] == '`' {
+			return unescape(s[start:pos]), pos + 1, nil
+		}
+		pos++
+	}
+	return nil, pos, fmt.Errorf("anal: unterminated quoted string %q", s)
 }
 
 func decodeScalar(raw string) any {
@@ -171,9 +313,6 @@ func decodeScalar(raw string) any {
 		if value, err := strconv.ParseFloat(raw, 64); err == nil {
 			return value
 		}
-	}
-	if strings.HasPrefix(raw, "`") && strings.HasSuffix(raw, "`") && len(raw) >= 2 {
-		return unescape(raw[1 : len(raw)-1])
 	}
 	return raw
 }

@@ -139,9 +139,103 @@ func TestEmptyObjectsTable(t *testing.T) {
 	}
 }
 
-func TestNestedRejected(t *testing.T) {
-	if _, err := Marshal(map[string]any{"a": map[string]any{"b": 1}}); err == nil {
-		t.Fatal("expected an error for a nested object")
+func TestNestedRoundTrip(t *testing.T) {
+	want := map[string]any{
+		"event": "order.created",
+		"meta": map[string]any{
+			"tags": []any{"vip", "rush"},
+			"address": map[string]any{
+				"city": "NYC",
+				"zip":  float64(10001),
+			},
+		},
+		"empty_obj": map[string]any{},
+		"empty_arr": []any{},
+	}
+	data, err := Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal %q: %v", data, err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("round-trip mismatch:\n got: %#v\nwant: %#v", got, want)
+	}
+}
+
+func TestNestedTableColumn(t *testing.T) {
+	want := []any{
+		map[string]any{"id": float64(1), "tags": []any{"a", "b|c", "d,e"}},
+		map[string]any{"id": float64(2), "tags": []any{}},
+	}
+	data, err := Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []any
+	if err := Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal %q: %v", data, err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("round-trip mismatch:\n got: %#v\nwant: %#v", got, want)
+	}
+}
+
+func TestMixedListRoundTrip(t *testing.T) {
+	want := []any{
+		float64(1),
+		"two",
+		map[string]any{"three": float64(3)},
+		[]any{float64(4), float64(5)},
+		nil,
+	}
+	data, err := Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []any
+	if err := Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal %q: %v", data, err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("round-trip mismatch:\n got: %#v\nwant: %#v", got, want)
+	}
+}
+
+func TestNestedAmbiguousKey(t *testing.T) {
+	want := map[string]any{
+		"obj": map[string]any{
+			"a:b": "colon key",
+			"":    "empty key",
+		},
+	}
+	data, err := Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal %q: %v", data, err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("round-trip mismatch:\n got: %#v\nwant: %#v", got, want)
+	}
+}
+
+func TestBareBracketStringQuoted(t *testing.T) {
+	want := map[string]any{"note": "[not an array]"}
+	data, err := Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal %q: %v", data, err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("round-trip mismatch:\n got: %#v\nwant: %#v", got, want)
 	}
 }
 

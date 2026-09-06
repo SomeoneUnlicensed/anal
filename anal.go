@@ -6,7 +6,7 @@
 // markers. It needs no model retraining: it wins by matching the tokenizer,
 // not by fighting it.
 //
-// The supported shapes are flat objects and flat lists:
+// The top-level shapes are flat objects and flat lists:
 //
 //	@table: {id,sku,qty}
 //	1|P123|2
@@ -19,10 +19,16 @@
 //	code
 //	coffee
 //
+// A field or item may itself hold an object or array, encoded inline as
+// {key:value,...} or [value,...], recursively, so any JSON document round
+// trips through ANAL:
+//
+//	@obj: {event,order_id,meta}
+//	order.created|8123|{tags:[vip,rush],address:{city:NYC,zip:10001}}
+//
 // Marshal and Unmarshal follow encoding/json conventions: structs and maps
 // become objects, slices become tables or lists, and json struct tags are
-// honored. Nested objects and arrays are not supported in ANAL v1 and
-// return an error.
+// honored.
 package anal
 
 import (
@@ -33,9 +39,10 @@ import (
 
 // Marshal returns the ANAL encoding of v.
 //
-// v must be a flat object or a flat list at the top level. Structs, maps,
-// slices, and scalars are normalized with encoding/json, so json struct
-// tags are honored. Nested values return an error.
+// v must be an object or a list at the top level. Structs, maps, slices,
+// and scalars are normalized with encoding/json, so json struct tags are
+// honored. Values nested inside a field or item are encoded inline as
+// {key:value,...} or [value,...].
 func Marshal(v any) ([]byte, error) {
 	normalized, err := normalize(v)
 	if err != nil {

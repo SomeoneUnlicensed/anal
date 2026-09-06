@@ -1,6 +1,6 @@
 ---
 name: anal
-description: Reduce token cost by encoding large, flat structured data (JSON lists/objects) as ANAL before including or emitting it. Use when the user asks to cut token usage or when a big flat JSON payload would otherwise enter context verbatim; skip for small, deeply nested, or irregular data.
+description: Reduce token cost by encoding large structured data (JSON lists/objects) as ANAL before including or emitting it. Use when the user asks to cut token usage or when a big JSON payload would otherwise enter context verbatim; skip for tiny or irregular data, or when deep nesting would erase the savings.
 metadata:
   short-description: Cut token cost by encoding data as ANAL
 ---
@@ -18,8 +18,10 @@ header, then values only, and uses single-token markers for booleans and null.
   otherwise sit in context verbatim.
 - You are about to emit a large structured output.
 
-Do not use ANAL for tiny payloads, deeply nested data, or when correctness
-beats cost — fall back to JSON there.
+ANAL saves the most on flat, tabular data (arrays of similar objects). It
+still handles nested objects/arrays, but the savings shrink as nesting gets
+deep. Do not use ANAL for tiny payloads, or when correctness beats cost —
+fall back to JSON there.
 
 ## How
 
@@ -53,6 +55,5 @@ ANAL: header lists fields; rows are values; T/F/~ mean true/false/null.
   unless ambiguous or containing `` ` `` `\` `|` or newlines — then
   backtick-quoted.
 - Escapes: `\\` `` \` `` `\|` `\n` `\t` `\r`.
-
-ANAL v1 encodes flat data only. If a value is itself an object or array, keep
-that part as JSON.
+- A value can itself be an object or array, encoded inline as
+  `{key:value,...}` or `[value,...]`, recursively.

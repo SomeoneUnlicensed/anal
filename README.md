@@ -60,14 +60,26 @@ code
 coffee
 ```
 
-- `@table` — a list of flat objects, one `|`-separated row each.
-- `@obj` — a single flat object.
-- `@list` — a flat list of scalars, one value per line.
+- `@table` — a list of objects, one `|`-separated row each.
+- `@obj` — a single object.
+- `@list` — a list of values, one per line.
 
 Values: `T` / `F` for booleans, `~` for null, numbers as-is, strings as-is
 unless ambiguous or containing special characters — then backtick-quoted.
 
 Escapes: `\\` `` \` `` `\|` `\n` `\t` `\r`.
+
+A field or item may itself be an object or array — encoded inline,
+recursively, as `{key:value,...}` or `[value,...]` — so any JSON document
+round-trips through ANAL:
+
+```text
+@obj: {event,order_id,meta}
+order.created|8123|{tags:[vip,rush],address:{city:NYC,zip:10001}}
+```
+
+ANAL still shines most on flat, tabular data; the token savings shrink as
+nesting gets deeper, since nested values fall back to JSON-like punctuation.
 
 ## API
 
@@ -75,8 +87,8 @@ Escapes: `\\` `` \` `` `\|` `\n` `\t` `\r`.
 slices, and scalars — and honors `json` struct tags. `Unmarshal` does the
 reverse.
 
-Nested objects and arrays are not supported in v1 and return an error. Use
-JSON for deeply nested data.
+Nested objects and arrays are supported (encoded inline); ANAL's compression
+advantage is largest on flat, tabular data and shrinks as nesting gets deep.
 
 ## Integrate
 
