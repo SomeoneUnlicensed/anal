@@ -1,5 +1,10 @@
 # ANAL
 
+[![CI](https://github.com/SomeoneUnlicensed/anal/actions/workflows/ci.yml/badge.svg)](https://github.com/SomeoneUnlicensed/anal/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/SomeoneUnlicensed/anal.svg)](https://pkg.go.dev/github.com/SomeoneUnlicensed/anal)
+[![Go Report Card](https://goreportcard.com/badge/github.com/SomeoneUnlicensed/anal)](https://goreportcard.com/report/github.com/SomeoneUnlicensed/anal)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 ANAL (Agent Notation, Actually Lean) is a compact, token-lean serialization
 format for data flowing between agents and models. It needs no model
 retraining: it wins by matching the tokenizer rather than fighting it.
@@ -60,23 +65,43 @@ code
 coffee
 ```
 
-- `@table` — a list of flat objects, one `|`-separated row each.
-- `@obj` — a single flat object.
-- `@list` — a flat list of scalars, one value per line.
+- `@table` — a list of objects, one `|`-separated row each.
+- `@obj` — a single object.
+- `@list` — a list of values, one per line.
 
 Values: `T` / `F` for booleans, `~` for null, numbers as-is, strings as-is
 unless ambiguous or containing special characters — then backtick-quoted.
 
 Escapes: `\\` `` \` `` `\|` `\n` `\t` `\r`.
 
+### Nested data
+
+Nested objects flatten into dot-joined header paths; arrays and empty
+objects become `&`-prefixed inline JSON cells:
+
+```text
+@table: {id,user.name,user.plan.tier,tags}
+1|alice|pro|&["a","b"]
+2|bob|free|&[]
+```
+
+decodes back to
+
+```json
+[
+  {"id": 1, "user": {"name": "alice", "plan": {"tier": "pro"}}, "tags": ["a", "b"]},
+  {"id": 2, "user": {"name": "bob", "plan": {"tier": "free"}}, "tags": []}
+]
+```
+
+Dots, commas and braces in literal key names are escaped (`a\.b`). Any JSON
+value encodes — agents never have to bail out to another format mid-stream.
+
 ## API
 
 `Marshal` accepts the same kinds of values as `encoding/json` — structs, maps,
 slices, and scalars — and honors `json` struct tags. `Unmarshal` does the
-reverse.
-
-Nested objects and arrays are not supported in v1 and return an error. Use
-JSON for deeply nested data.
+reverse, rebuilding nested objects from dot-joined paths.
 
 ## Integrate
 
@@ -110,18 +135,23 @@ python tools/analctl.py diff < payload.json
 
 ## Benchmark
 
-Token counts for the same data, measured with `tiktoken` (`cl100k_base`):
+Token counts with `tiktoken` (`cl100k_base`) — full tables and methodology
+in [BENCHMARKS.md](BENCHMARKS.md):
 
-| encoding | chars | tokens |
-|---|---:|---:|
-| JSON | 133 | 61 |
-| TOON | 81 | 38 |
-| ANAL | 63 | 35 |
+| payload | JSON min | TOON | ANAL |
+|---|---:|---:|---:|
+| events_100 (flat) | 3022 | 1583 | 1634 |
+| catalog_500 (flat) | 18752 | 12504 | 12765 |
+| nested_100 | 3902 | 5000 | **2420** |
 
-CPU benchmarks:
+On flat numeric tables ANAL lands within a few percent of CSV/TOON; on
+nested or mixed data it wins by ~2x against TOON and ~38% against minified
+JSON, and keeps working where CSV can't encode at all.
 
 ```sh
-go test -bench=. -benchmem
+pip install tiktoken toon-format
+python tools/bench_tokens.py   # reproduce the tables
+go test -bench=. -benchmem     # CPU benchmarks
 ```
 
 ## License

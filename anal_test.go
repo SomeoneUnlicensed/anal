@@ -139,9 +139,144 @@ func TestEmptyObjectsTable(t *testing.T) {
 	}
 }
 
-func TestNestedRejected(t *testing.T) {
-	if _, err := Marshal(map[string]any{"a": map[string]any{"b": 1}}); err == nil {
-		t.Fatal("expected an error for a nested object")
+func TestNestedRoundTrip(t *testing.T) {
+	input := map[string]any{
+		"id":   7,
+		"user": map[string]any{"name": "bob", "role": "admin"},
+		"meta": map[string]any{"deep": map[string]any{"deeper": 1}},
+	}
+	data, err := Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{
+		"id":   float64(7),
+		"user": map[string]any{"name": "bob", "role": "admin"},
+		"meta": map[string]any{"deep": map[string]any{"deeper": float64(1)}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("round-trip mismatch:\n got: %#v\nwant: %#v", got, want)
+	}
+}
+
+func TestNestedTableRoundTrip(t *testing.T) {
+	input := []map[string]any{
+		{"id": 1, "user": map[string]any{"name": "a"}, "tags": []any{"x", "y"}},
+		{"id": 2, "user": map[string]any{"name": "b"}},
+	}
+	data, err := Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []map[string]any
+	if err := Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	want := []map[string]any{
+		{"id": float64(1), "user": map[string]any{"name": "a"}, "tags": []any{"x", "y"}},
+		{"id": float64(2), "user": map[string]any{"name": "b"}, "tags": nil},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("round-trip mismatch:\n got: %#v\nwant: %#v", got, want)
+	}
+}
+
+func TestDottedKeysRoundTrip(t *testing.T) {
+	input := map[string]any{
+		"a.b":    1,
+		"a":      map[string]any{"b": 2},
+		"x,y":    "v",
+		"weird{": true,
+	}
+	data, err := Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{
+		"a.b":    float64(1),
+		"a":      map[string]any{"b": float64(2)},
+		"x,y":    "v",
+		"weird{": true,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("round-trip mismatch:\n got: %#v\nwant: %#v", got, want)
+	}
+}
+
+func TestMixedListRoundTrip(t *testing.T) {
+	input := []any{"text", 42, map[string]any{"k": "v"}, []any{1, 2}}
+	data, err := Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []any
+	if err := Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	want := []any{"text", float64(42), map[string]any{"k": "v"}, []any{float64(1), float64(2)}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("round-trip mismatch:\n got: %#v\nwant: %#v", got, want)
+	}
+}
+
+func TestNestedInStruct(t *testing.T) {
+	type outer struct {
+		ID   int `json:"id"`
+		User struct {
+			Name string `json:"name"`
+		} `json:"user"`
+	}
+	want := outer{ID: 1}
+	want.User.Name = "bob"
+	data, err := Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got outer
+	if err := Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("round-trip mismatch:\n got: %#v\nwant: %#v", got, want)
+	}
+}
+
+func TestEmptyNested(t *testing.T) {
+	input := map[string]any{"a": map[string]any{}, "b": []any{}}
+	data, err := Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{"a": map[string]any{}, "b": []any{}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("round-trip mismatch:\n got: %#v\nwant: %#v", got, want)
+	}
+}
+
+func TestAmpersandStringRoundTrip(t *testing.T) {
+	input := map[string]any{"s": "&literal", "j": `&{"a":1}`}
+	data, err := Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, input) {
+		t.Fatalf("round-trip mismatch:\n got: %#v\nwant: %#v", got, input)
 	}
 }
 
@@ -165,6 +300,16 @@ func TestGoldenOutput(t *testing.T) {
 			name:  "list",
 			value: []string{"code", "coffee"},
 			want:  "@list:\ncode\ncoffee\n",
+		},
+		{
+			name:  "nested object",
+			value: map[string]any{"user": map[string]any{"name": "bob"}},
+			want:  "@obj: {user.name}\nbob\n",
+		},
+		{
+			name:  "array cell",
+			value: map[string]any{"id": 1, "tags": []any{"x", "y"}},
+			want:  "@obj: {id,tags}\n1|&[\"x\",\"y\"]\n",
 		},
 	}
 	for _, test := range tests {

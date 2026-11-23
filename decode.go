@@ -1,6 +1,7 @@
 package anal
 
 import (
+	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
@@ -74,7 +75,7 @@ func parseFields(text string) ([]string, error) {
 		return nil, nil
 	}
 	if strings.HasPrefix(text, "{") && strings.HasSuffix(text, "}") {
-		parts := strings.Split(text[1:len(text)-1], ",")
+		parts := splitUnescaped(text[1:len(text)-1], ',')
 		fields := make([]string, 0, len(parts))
 		for _, part := range parts {
 			if trimmed := strings.TrimSpace(part); trimmed != "" {
@@ -125,37 +126,60 @@ func rowToObject(fields []string, row string) map[string]any {
 	values := splitRow(row)
 	out := make(map[string]any, len(fields))
 	for i, field := range fields {
+		var value any
 		if i < len(values) {
-			out[field] = decodeScalar(values[i])
-		} else {
-			out[field] = nil
+			value = decodeScalar(values[i])
 		}
+		setPath(out, field, value)
 	}
 	return out
 }
 
-func splitRow(row string) []string {
+// setPath stores value at a dot-joined header path, rebuilding nested maps.
+// Segments are unescaped so literal dots in key names survive the trip.
+func setPath(root map[string]any, rawPath string, value any) {
+	segments := splitUnescaped(rawPath, '.')
+	current := root
+	for _, segment := range segments[:len(segments)-1] {
+		key := unescape(segment)
+		next, ok := current[key].(map[string]any)
+		if !ok {
+			next = make(map[string]any)
+			current[key] = next
+		}
+		current = next
+	}
+	current[unescape(segments[len(segments)-1])] = value
+}
+
+// splitUnescaped splits s on sep, treating an escaped sep (and any escaped
+// char) as data. Backslashes are preserved for the caller to unescape.
+func splitUnescaped(s string, sep byte) []string {
 	var out []string
 	var cur strings.Builder
-	for i := 0; i < len(row); i++ {
-		switch row[i] {
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
 		case '\\':
-			if i+1 < len(row) {
-				cur.WriteByte(row[i])
-				cur.WriteByte(row[i+1])
+			if i+1 < len(s) {
+				cur.WriteByte(s[i])
+				cur.WriteByte(s[i+1])
 				i++
 			} else {
-				cur.WriteByte(row[i])
+				cur.WriteByte(s[i])
 			}
-		case '|':
+		case sep:
 			out = append(out, cur.String())
 			cur.Reset()
 		default:
-			cur.WriteByte(row[i])
+			cur.WriteByte(s[i])
 		}
 	}
 	out = append(out, cur.String())
 	return out
+}
+
+func splitRow(row string) []string {
+	return splitUnescaped(row, '|')
 }
 
 func decodeScalar(raw string) any {
@@ -174,6 +198,13 @@ func decodeScalar(raw string) any {
 	}
 	if strings.HasPrefix(raw, "`") && strings.HasSuffix(raw, "`") && len(raw) >= 2 {
 		return unescape(raw[1 : len(raw)-1])
+	}
+	if strings.HasPrefix(raw, "&") {
+		var value any
+		if err := json.Unmarshal([]byte(unescape(raw[1:])), &value); err == nil {
+			return value
+		}
+		return raw
 	}
 	return raw
 }

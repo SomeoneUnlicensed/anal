@@ -5,6 +5,7 @@ Mirrors the Go package github.com/SomeoneUnlicensed/anal.
 
 from __future__ import annotations
 
+import json
 import re
 
 _TRUE = "T"
@@ -54,37 +55,56 @@ def loads(text):
 
 
 def _dump_object(obj) -> str:
-    fields = sorted(obj)
+    flat = _flatten(obj)
+    fields = sorted(flat)
     header = "@obj: {" + ",".join(fields) + "}\n"
     if not fields:
         return header
-    return header + "|".join(_encode(obj[field]) for field in fields) + "\n"
+    return header + "|".join(_encode(flat[field]) for field in fields) + "\n"
 
 
 def _dump_list(items) -> str:
     if not items:
         return "@list:\n"
     if all(isinstance(item, dict) for item in items):
-        fields = _union_fields(items)
+        rows = [_flatten(item) for item in items]
+        fields = _union_fields(rows)
         header = "@table: {" + ",".join(fields) + "}\n"
         if not fields:
             return header + "\n" * len(items)
         return header + "".join(
-            "|".join(_encode(item.get(field)) for field in fields) + "\n"
-            for item in items
+            "|".join(_encode(row.get(field)) for field in fields) + "\n"
+            for row in rows
         )
-    if any(isinstance(item, dict) for item in items):
-        raise TypeError("mixed lists are not supported")
     return "@list:\n" + "".join(_encode(item) + "\n" for item in items)
 
 
-def _union_fields(items):
+def _union_fields(rows):
     fields = []
-    for item in items:
-        for key in item:
+    for row in rows:
+        for key in row:
             if key not in fields:
                 fields.append(key)
     return sorted(fields)
+
+
+def _flatten(obj, prefix="", out=None):
+    """Collapse nested dicts into dot-joined header paths."""
+    if out is None:
+        out = {}
+    for key, value in obj.items():
+        path = _escape_field(key)
+        if prefix:
+            path = prefix + "." + path
+        if isinstance(value, dict) and value:
+            _flatten(value, path, out)
+        else:
+            out[path] = value
+    return out
+
+
+def _escape_field(text) -> str:
+    return "".join("\\" + ch if ch in "\\.,{}" else ch for ch in str(text))
 
 
 def _encode(value) -> str:
@@ -95,7 +115,7 @@ def _encode(value) -> str:
     if value is None:
         return _NULL
     if isinstance(value, (dict, list, tuple)):
-        raise TypeError("nested structures are not supported")
+        return "&" + _escape(json.dumps(value, separators=(",", ":")))
     if isinstance(value, bool):
         return _TRUE if value else _FALSE
     if isinstance(value, (int, float)):
@@ -109,6 +129,7 @@ def _needs_quotes(text) -> bool:
         text == ""
         or _NUMBER.fullmatch(text) is not None
         or text in (_TRUE, _FALSE, _NULL)
+        or text.startswith("&")
         or any(ch in text for ch in "`\\|\n\t\r")
     )
 
@@ -141,6 +162,11 @@ def _decode(raw):
         return float(raw) if any(ch in raw for ch in ".eE") else int(raw)
     if raw.startswith("`") and raw.endswith("`") and len(raw) >= 2:
         return _unescape(raw[1:-1])
+    if raw.startswith("&"):
+        try:
+            return json.loads(_unescape(raw[1:]))
+        except ValueError:
+            return raw
     return raw
 
 
@@ -155,20 +181,24 @@ def _parse_fields(text):
     if not text or text == "{}":
         return []
     if text.startswith("{") and text.endswith("}"):
-        return [field.strip() for field in text[1:-1].split(",") if field.strip()]
+        return [
+            field.strip()
+            for field in _split_unescaped(text[1:-1], ",")
+            if field.strip()
+        ]
     raise ValueError(f"bad field header: {text!r}")
 
 
-def _split_row(row):
+def _split_unescaped(text, sep):
     out, cur = [], []
     i = 0
-    while i < len(row):
-        ch = row[i]
-        if ch == "\\" and i + 1 < len(row):
+    while i < len(text):
+        ch = text[i]
+        if ch == "\\" and i + 1 < len(text):
             cur.append(ch)
-            cur.append(row[i + 1])
+            cur.append(text[i + 1])
             i += 2
-        elif ch == "|":
+        elif ch == sep:
             out.append("".join(cur))
             cur = []
             i += 1
@@ -177,6 +207,10 @@ def _split_row(row):
             i += 1
     out.append("".join(cur))
     return out
+
+
+def _split_row(row):
+    return _split_unescaped(row, "|")
 
 
 def _build(block):
@@ -194,4 +228,16 @@ def _build(block):
 
 def _row_to_dict(fields, row):
     values = _split_row(row)
-    return {field: (_decode(values[i]) if i < len(values) else None) for i, field in enumerate(fields)}
+    out = {}
+    for i, field in enumerate(fields):
+        value = _decode(values[i]) if i < len(values) else None
+        _set_path(out, field, value)
+    return out
+
+
+def _set_path(root, raw_path, value):
+    segments = _split_unescaped(raw_path, ".")
+    current = root
+    for segment in segments[:-1]:
+        current = current.setdefault(_unescape(segment), {})
+    current[_unescape(segments[-1])] = value

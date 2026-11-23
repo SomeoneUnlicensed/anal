@@ -6,14 +6,15 @@
 // markers. It needs no model retraining: it wins by matching the tokenizer,
 // not by fighting it.
 //
-// The supported shapes are flat objects and flat lists:
+// The supported shapes are objects and lists; nested objects flatten into
+// dot-joined header paths:
 //
 //	@table: {id,sku,qty}
 //	1|P123|2
 //	2|P124|1
 //
-//	@obj: {event,order_id}
-//	order.created|8123
+//	@obj: {event,user.name}
+//	order.created|bob
 //
 //	@list:
 //	code
@@ -21,8 +22,8 @@
 //
 // Marshal and Unmarshal follow encoding/json conventions: structs and maps
 // become objects, slices become tables or lists, and json struct tags are
-// honored. Nested objects and arrays are not supported in ANAL v1 and
-// return an error.
+// honored. Arrays and empty objects keep their shape as &-prefixed inline
+// JSON cells.
 package anal
 
 import (
@@ -33,9 +34,10 @@ import (
 
 // Marshal returns the ANAL encoding of v.
 //
-// v must be a flat object or a flat list at the top level. Structs, maps,
-// slices, and scalars are normalized with encoding/json, so json struct
-// tags are honored. Nested values return an error.
+// v must be an object or a list at the top level. Structs, maps, slices,
+// and scalars are normalized with encoding/json, so json struct tags are
+// honored. Nested objects flatten into dot-joined header paths; arrays
+// become inline JSON cells.
 func Marshal(v any) ([]byte, error) {
 	normalized, err := normalize(v)
 	if err != nil {

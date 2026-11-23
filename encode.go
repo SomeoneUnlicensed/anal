@@ -1,7 +1,7 @@
 package anal
 
 import (
-	"errors"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"sort"
@@ -18,8 +18,9 @@ const (
 var numberPattern = regexp.MustCompile(`^-?[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?$`)
 
 func encodeObject(m map[string]any) ([]byte, error) {
-	fields := make([]string, 0, len(m))
-	for key := range m {
+	flat := flattenMap(m, "", nil)
+	fields := make([]string, 0, len(flat))
+	for key := range flat {
 		fields = append(fields, key)
 	}
 	sort.Strings(fields)
@@ -38,7 +39,7 @@ func encodeObject(m map[string]any) ([]byte, error) {
 		if i > 0 {
 			sb.WriteByte('|')
 		}
-		encoded, err := encodeScalar(m[field])
+		encoded, err := encodeScalar(flat[field])
 		if err != nil {
 			return nil, err
 		}
@@ -65,11 +66,6 @@ func encodeList(list []any) ([]byte, error) {
 	if allObjects {
 		return encodeTable(list)
 	}
-	for _, item := range list {
-		if _, ok := item.(map[string]any); ok {
-			return nil, errors.New("anal: mixed lists are not supported")
-		}
-	}
 
 	var sb strings.Builder
 	sb.WriteString("@list:\n")
@@ -85,7 +81,19 @@ func encodeList(list []any) ([]byte, error) {
 }
 
 func encodeTable(list []any) ([]byte, error) {
-	fields := unionFields(list)
+	rows := make([]map[string]any, len(list))
+	seen := make(map[string]bool)
+	var fields []string
+	for i, item := range list {
+		rows[i] = flattenMap(item.(map[string]any), "", nil)
+		for key := range rows[i] {
+			if !seen[key] {
+				seen[key] = true
+				fields = append(fields, key)
+			}
+		}
+	}
+	sort.Strings(fields)
 
 	var sb strings.Builder
 	sb.WriteString("@table: {")
@@ -104,8 +112,7 @@ func encodeTable(list []any) ([]byte, error) {
 		return []byte(sb.String()), nil
 	}
 
-	for _, item := range list {
-		row := item.(map[string]any)
+	for _, row := range rows {
 		for i, field := range fields {
 			if i > 0 {
 				sb.WriteByte('|')
@@ -121,19 +128,38 @@ func encodeTable(list []any) ([]byte, error) {
 	return []byte(sb.String()), nil
 }
 
-func unionFields(list []any) []string {
-	seen := make(map[string]bool)
-	var fields []string
-	for _, item := range list {
-		for key := range item.(map[string]any) {
-			if !seen[key] {
-				seen[key] = true
-				fields = append(fields, key)
-			}
-		}
+// flattenMap collapses nested objects into dot-joined header paths, e.g.
+// {"user": {"name": "x"}} becomes {"user.name": "x"}. Empty maps, arrays and
+// scalars stay as leaf values; path segments are escaped for the header.
+func flattenMap(m map[string]any, prefix string, out map[string]any) map[string]any {
+	if out == nil {
+		out = make(map[string]any, len(m))
 	}
-	sort.Strings(fields)
-	return fields
+	for key, value := range m {
+		path := escapeField(key)
+		if prefix != "" {
+			path = prefix + "." + path
+		}
+		if child, ok := value.(map[string]any); ok && len(child) > 0 {
+			flattenMap(child, path, out)
+			continue
+		}
+		out[path] = value
+	}
+	return out
+}
+
+// escapeField escapes header metacharacters in one field path segment.
+func escapeField(s string) string {
+	var sb strings.Builder
+	for _, r := range s {
+		switch r {
+		case '\\', '.', ',', '{', '}':
+			sb.WriteByte('\\')
+		}
+		sb.WriteRune(r)
+	}
+	return sb.String()
 }
 
 func encodeScalar(value any) (string, error) {
@@ -153,7 +179,11 @@ func encodeScalar(value any) (string, error) {
 	case float64:
 		return strconv.FormatFloat(typed, 'g', -1, 64), nil
 	case map[string]any, []any:
-		return "", fmt.Errorf("anal: nested structures are not supported")
+		raw, err := json.Marshal(typed)
+		if err != nil {
+			return "", err
+		}
+		return "&" + escape(string(raw)), nil
 	default:
 		return "", fmt.Errorf("anal: unsupported value type %T", value)
 	}
@@ -167,6 +197,9 @@ func needsQuote(s string) bool {
 		return true
 	}
 	if s == trueToken || s == falseToken || s == nullToken {
+		return true
+	}
+	if strings.HasPrefix(s, "&") {
 		return true
 	}
 	return strings.ContainsAny(s, "`\\|\n\t\r")
